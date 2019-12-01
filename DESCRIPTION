@@ -1,13 +1,14 @@
-Package: project
-Title: What the Package Does (One Line, Title Case)
+Package: bayeserror
+Title: Estimating Bayes Error in Classification Tasks
 Version: 0.0.0.9000
 Authors@R: 
-    person(given = "First",
-           family = "Last",
+    person(given = "Ryan",
+           family = "Holbrook",
            role = c("aut", "cre"),
-           email = "first.last@example.com",
-           comment = c(ORCID = "YOUR-ORCID-ID"))
-Description: What the package does (one paragraph).
+           email = "ryan@mathformachines.com"))         
+Description: The Bayes error of a data set is a measure of how informative the data set is. It puts an upper bound on how accurate any prediction from it could be. This package contains several procedures to estimate Bayes error, two unsupervised based on distance measures, and one supervised based on classifier ensembles.
+URL: http://github.com/ryanholbrook/bayeserror
+BugReports: http://github.com/ryanholbrook/bayeserror/issues
 License: MIT + file LICENSE
 Encoding: UTF-8
 LazyData: true

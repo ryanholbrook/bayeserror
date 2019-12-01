@@ -1,24 +1,90 @@
 # Estimation of Bayesian Error
 
+Procedure
+---------
+
+Say $X$ is a data set with categorical response variable $y$ with $C$ number of categories. We will form an ensemble of base classifiers $f^1, \ldots, f^N$, which we will call $f^{Ave}$. We desire that the classifiers have errors with minimal bias and that the errors are minimally correlated. It is not necessary that the errors are especially small, however. The classifiers don't need to be especially accurate, but they do need to be distinct and unbiased. We will train these classifiers on the data set, and by comparing their individual errors to the ensemble error, we can get an estimate of the informativeness of the data set.
+
+1. Partition the data into training sets and prediction sets. We might use K-fold CV with K tending on the higher side (or even LOO); again, we want to reduce bias in the errors.
+2. For each fold:
+  a. Fit each of the classifiers $f^1, \ldots, f^n$ and $f^{Ave}$ on the training set.
+  b. Make predictions for each base classifier $f^1, \ldots, f^n$ on the testing set. We will have a vector $P^k_i$ of predictions $P^1, \ldots, P^N$ for each classifier.
+  c. Make predictions for $\f^{Ave}$ to get $P^{Ave}_i$. If predictive probabilities were used, this is the average of these probabilities. If a classification response was used, take the majority vote.
+  d. Compute the log-loss (cross-entropy) errors of these predictions. We will now have errors $\epsilon^1, \ldots, \epsilon^N, \epsilon^{Ave}_{Total}$.
+  e. Compute the total error for all of the base classifiers by averaging across classifiers. We will have $\epsilon_{Total} = \sum_{N} \epsilon^k$.
+5. Average errors produced by each fold to get $E^1, \ldots, E^{N}$, $E_{Total}$ and $E^Ave_{Total}$.
+4. Compute the Normalized Dual Total Correlation of Error for the base classifiers: 
+\[
+\delta = \operatorname{ND}(E^1, \ldots, E^{N}) = \frac{H(E^1, \ldots, E^{N}) - \sum_k H(E^k \mid E^{-k})}{H(E^{1}, \ldots, E^{N})
+\]
+5. Compute the estimated Bayes error.
+\[
+E_{Bayes} = \frac{N E^{Ave}_{Total} - ((N - 1) \delta + 1) E_{Total}}{(N - 1)(1 - \delta)}
+\]
+
+Question: When is the best time to compute the error correlation? Once, after the resampling, as here? Other options are to use the initial errors on each category and averaging or to use the error produced by each fold and averaging.
+
 ``` R
-cabinets::create_cabinet(name = "project",
-                         directory = "/home/jovyan",
-                         structure = list(
-                             "data/derived" = NULL,
-                             "data/final" = NULL,
-                             "data/source" = NULL,
-                             "man" = NULL,
-                             "models" = NULL,
-                             "notebooks" = NULL,
-                             "references" = NULL,
-                             "reports" = NULL,
-                             "reports/figures" = NULL,
-                             "R" = NULL,
-                             "R/data" = NULL,
-                             "R/features" = NULL,
-                             "R/models" = NULL,
-                             "R/visualization" = NULL,
-                             "tests/testthat" = NULL,
-                             "tests/validate" = NULL
-                         ))
+# Binary classification data
+data_all <- as.data.frame(mlbench::mlbench.2dnormals(1000, 2))
+
+# 10-fold CV
+folds <- origami::make_folds(data_all,
+                             ## 10-fold CV
+                             fold_fun = folds_vfold, V = 10,
+                             ## Balance samples across classes
+                             strata_ids = data_all$classes)
+
+randomForest_classify <- function(x, y, newdata) {
+    fit <- randomForest::randomForest(x = x, y = factor(y))
+    preds <- predict(fit, newdata = newdata, type = "prob")
+    return(preds)
+}
+
+naivebayes_classify <- function(x, y, newdata) {
+    fit <- e1071::naiveBayes(x = x, y = y)
+    preds <- predict(fit, newdata = newdata, type = "raw")
+    return(preds)
+}
+
+svm_classify <- function(x, y, newdata) {
+    fit <- e1071::svm(x = x, y = y, probability = TRUE)
+    preds <- predict(fit, newdata = data, probability = TRUE)
+    return(preds)
+}
+
+make_errors <- function(fold, classify) {
+    ## Get training and prediction folds.
+    data_train <- origami::training(fold)
+    data_predict <- origami::validation(fold)
+    p <- ncol(data_train)
+    x_train <- data_train[, 1:(p-1)]
+    y_train <- data_train[[, p]]
+    x_test <- data_test[, 1:(p-1)]
+    y_test <- data_test[[, p]]
+    ## Make predictions on prediction set
+    p1 <- randomForest_classify(x_train, y_train, x_test)
+    p2 <- naivebayes_classify(x_train, y_train, x_test)
+    p3 <- svm_classify(x_train, y_train, x_test)
+    ps <- list(p1, p2, p3)
+    ## Prediction probabilities for ensemble classifier 
+    p_ave <- apply(abind::abind(ps, along=3),
+                   MARGIN = 1:2,
+                   FUN = mean)
+    ## Compute log-loss (cross-entropy) error
+    ## List of errors for base classifiers
+    es <- lapply(ps,
+                 function(p) MLmetrics::MultiLogLoss(y_pred = p,
+                                                     y_true = y_test))
+    ## Error for ensemble
+    e_ave <- lapply(p_ave,
+                    function(p) MLmetrics::MultiLogLoss(y_pred = p,
+                                                        y_true = y_test))
+    return(list(es = es, e_ave = e_ave))
+}
+
+all_es <- lapply(folds, make_errors)
+
+
+
 ```
