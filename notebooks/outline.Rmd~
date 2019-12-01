@@ -1,0 +1,12 @@
+* Estimation of Bayesian Error
+
+#+begin_src R
+cabinets::create_cabinet(name = "project",
+                         directory = here::here(),
+                         structure = list(
+                             "data/derived" = NULL,
+                             "data/source" = NULL,
+                             "date/objects" = NULL,
+                             "notebooks" = NULL
+                         ))
+#+end_src

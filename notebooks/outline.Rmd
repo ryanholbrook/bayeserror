@@ -1,0 +1,24 @@
+# Estimation of Bayesian Error
+
+``` R
+cabinets::create_cabinet(name = "project",
+                         directory = "/home/jovyan",
+                         structure = list(
+                             "data/derived" = NULL,
+                             "data/final" = NULL,
+                             "data/source" = NULL,
+                             "man" = NULL,
+                             "models" = NULL,
+                             "notebooks" = NULL,
+                             "references" = NULL,
+                             "reports" = NULL,
+                             "reports/figures" = NULL,
+                             "R" = NULL,
+                             "R/data" = NULL,
+                             "R/features" = NULL,
+                             "R/models" = NULL,
+                             "R/visualization" = NULL,
+                             "tests/testthat" = NULL,
+                             "tests/validate" = NULL
+                         ))
+```
