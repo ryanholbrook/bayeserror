@@ -5,7 +5,7 @@ Authors@R:
     person(given = "Ryan",
            family = "Holbrook",
            role = c("aut", "cre"),
-           email = "ryan@mathformachines.com"))         
+           email = "ryan@mathformachines.com")
 Description: The Bayes error of a data set is a measure of how informative the data set is. It puts an upper bound on how accurate any prediction from it could be. This package contains several procedures to estimate Bayes error, two unsupervised based on distance measures, and one supervised based on classifier ensembles.
 URL: http://github.com/ryanholbrook/bayeserror
 BugReports: http://github.com/ryanholbrook/bayeserror/issues
@@ -13,7 +13,8 @@ License: MIT + file LICENSE
 Encoding: UTF-8
 LazyData: true
 Suggests: 
-    testthat
+    testthat (>= 2.1.0)
 RoxygenNote: 7.0.1
+Roxygen: list(markdown = TRUE)
 Imports: 
-    magrittr
+    data.table
