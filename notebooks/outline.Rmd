@@ -24,67 +24,72 @@ E_{Bayes} = \frac{N E^{Ave}_{Total} - ((N - 1) \delta + 1) E_{Total}}{(N - 1)(1 
 
 Question: When is the best time to compute the error correlation? Once, after the resampling, as here? Other options are to use the initial errors on each category and averaging or to use the error produced by each fold and averaging.
 
+
 ``` R
-# Binary classification data
-data_all <- as.data.frame(mlbench::mlbench.2dnormals(1000, 2))
+source("R/bayeserror.R")
 
-# 10-fold CV
-folds <- origami::make_folds(data_all,
-                             ## 10-fold CV
-                             fold_fun = folds_vfold, V = 10,
-                             ## Balance samples across classes
-                             strata_ids = data_all$classes)
+## Binary classification data
 
-randomForest_classify <- function(x, y, newdata) {
-    fit <- randomForest::randomForest(x = x, y = factor(y))
-    preds <- predict(fit, newdata = newdata, type = "prob")
-    return(preds)
+## 2D Gaussian
+set.seed(31415)
+data_2dnormal <- as.data.frame(mlbench::mlbench.2dnormals(2000, 2))
+data_2dnormal <- data.matrix(data_2dnormal)
+data_2dnormal[, 3] <- data_2dnormal[, 3] - 1 # need 0/1 classes instead of 1/2
+x <- data_2dnormal[, 1:2]
+y <- data_2dnormal[, 3]
+## We will use three classifiers
+classifiers <- c(randomForest_classify, naivebayes_classify, svm_classify)
+bayeserror(x, y, classifiers)
+
+set.seed(31415)
+data(Sonar, package = "mlbench")
+data_sonar <- data.matrix(Sonar)
+data_sonar[, ncol(Sonar)] <- data_sonar[, ncol(Sonar)] - 1 # need 0/1 classes instead of 1/2
+x <- data_sonar[, -ncol(data_sonar)]
+y <- data_sonar[, ncol(data_sonar)]
+## We will use three classifiers
+classifiers <- c(randomForest_classify, naivebayes_classify, svm_classify)
+bayeserror(x, y, classifiers)
+
+set.seed(31415)
+data(PimaIndiansDiabetes, package = "mlbench")
+data_sonar <- data.matrix(Sonar)
+data_sonar[, ncol(Sonar)] <- data_sonar[, ncol(Sonar)] - 1 # need 0/1 classes instead of 1/2
+x <- data_sonar[, -ncol(data_sonar)]
+y <- data_sonar[, ncol(data_sonar)]
+## We will use three classifiers
+classifiers <- c(randomForest_classify, naivebayes_classify, svm_classify)
+bayeserror(x, y, classifiers)
+
+```
+
+
+
+``` R
+print_information_measures<- function(X, ave) {
+    X <- infotheo::discretize(X)
+    ave <- infotheo::discretize(ave)
+    mi <- unlist(lapply(X = X,
+                        FUN = function (x)
+                            infotheo::mutinformation(x, ave)))
+    ent <- infotheo::entropy(X)
+    multi_mi <- infotheo::multiinformation(X)
+    sum_mi <- sum(mi)
+    avg_mi <- mean(mi)
+    sum_multi <- sum_mi / multi_mi
+    avg_multi <- avg_mi / multi_mi
+    sum_ent <- sum_mi / ent # Maybe?
+    avg_ent <- avg_mi / ent
+    message("MI ", paste(mi, "\n"))
+    message(paste("\nEnt", ent,
+                  "\nMulti", multi_mi,
+                  "\nSum", sum_mi,
+                  "\nAvg", avg_mi,
+                  "\nSum Multi", sum_multi,
+                  "\nAvg Multi", avg_multi,
+                  "\nSum Ent", sum_ent,
+                  "\nAvg Ent", avg_ent))
 }
-
-naivebayes_classify <- function(x, y, newdata) {
-    fit <- e1071::naiveBayes(x = x, y = y)
-    preds <- predict(fit, newdata = newdata, type = "raw")
-    return(preds)
-}
-
-svm_classify <- function(x, y, newdata) {
-    fit <- e1071::svm(x = x, y = y, probability = TRUE)
-    preds <- predict(fit, newdata = data, probability = TRUE)
-    return(preds)
-}
-
-make_errors <- function(fold, classify) {
-    ## Get training and prediction folds.
-    data_train <- origami::training(fold)
-    data_predict <- origami::validation(fold)
-    p <- ncol(data_train)
-    x_train <- data_train[, 1:(p-1)]
-    y_train <- data_train[[, p]]
-    x_test <- data_test[, 1:(p-1)]
-    y_test <- data_test[[, p]]
-    ## Make predictions on prediction set
-    p1 <- randomForest_classify(x_train, y_train, x_test)
-    p2 <- naivebayes_classify(x_train, y_train, x_test)
-    p3 <- svm_classify(x_train, y_train, x_test)
-    ps <- list(p1, p2, p3)
-    ## Prediction probabilities for ensemble classifier 
-    p_ave <- apply(abind::abind(ps, along=3),
-                   MARGIN = 1:2,
-                   FUN = mean)
-    ## Compute log-loss (cross-entropy) error
-    ## List of errors for base classifiers
-    es <- lapply(ps,
-                 function(p) MLmetrics::MultiLogLoss(y_pred = p,
-                                                     y_true = y_test))
-    ## Error for ensemble
-    e_ave <- lapply(p_ave,
-                    function(p) MLmetrics::MultiLogLoss(y_pred = p,
-                                                        y_true = y_test))
-    return(list(es = es, e_ave = e_ave))
-}
-
-all_es <- lapply(folds, make_errors)
-
 
 
 ```
