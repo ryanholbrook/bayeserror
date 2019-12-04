@@ -13,42 +13,19 @@ knitr::opts_chunk$set(
 )
 ```
 
-# project
+# bayeserror
 
 <!-- badges: start -->
 <!-- badges: end -->
 
-The goal of project is to ...
+This package (will eventually) implement several estimators of the [Bayes error rate](https://en.wikipedia.org/wiki/Bayes_error_rate) of a data set for a classification task. The Bayes error rate is a measure of how well the features of the data can discriminate among the classes. It gives the *best possible* error rate attainable from the data. If the distributions of the classes overlap, then the Bayes error rate must be greater than zero.
 
-## Installation
+There are three parametric estimates:
+1. Mahalanobis distance
+2. Bhattacharyya distance
+3. Chernoff bound
 
-You can install the released version of project from [CRAN](https://CRAN.R-project.org) with:
-
-``` r
-install.packages("project")
-```
-
-## Example
-
-This is a basic example which shows you how to solve a common problem:
-
-```{r example}
-library(project)
-## basic example code
-```
-
-What is special about using `README.Rmd` instead of just `README.md`? You can include R chunks like so:
-
-```{r cars}
-summary(cars)
-```
-
-You'll still need to render `README.Rmd` regularly, to keep `README.md` up-to-date.
-
-You can also embed plots, for example:
-
-```{r pressure, echo = FALSE}
-plot(pressure)
-```
-
-In that case, don't forget to commit and push the resulting figure files, so they display on GitHub!
+And three non-parametric estimates:
+4. Nearest Neighbor
+5. Classifier Ensembles
+6. Plurality Error
