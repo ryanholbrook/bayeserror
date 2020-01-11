@@ -190,6 +190,9 @@ dual_total_correlation <- function(X, normalized = FALSE) {
     return(result)
 }
 
+#' Average Mutual Information
+#'
+#' The average mutual information as a fraction of the total entropy.
 average_mutual_information <- function(X, ave) {
     checkmate::assert_matrix(X, mode = "integerish")
     checkmate::assert_integerish(ave)
@@ -277,4 +280,91 @@ bayeserror <- function(x,
     return(list("errors" = errs, "e_total" = e_total,
                 "e_ave" = e_ave, "delta" = delta,
                 "e_bayes" = e_bayes))
+}
+
+
+########## Nonparametric Estimate ##########
+
+#' Upper Bound of the Bayes Error Rate given by the Mahalanobis Distance
+#'
+#' Provides an upper bound for the Bayes error rate of a dataset on
+#' binary classes. This bound requires no assumptions of the
+#' distribution of the data.
+#' 
+#' @param x a data matrix with numeric values
+#' @param y a binary vector
+#' @return an estimate of the Bayes error rate of x w.r.t. y
+#'
+#' @details
+#' The Mahalanobis distance between class 0 and class 1 is given by
+#' \deqn{M_d = (\mu_0 - \mu_1)^T \Sigma^{-1}(\mu_0 - \mu_1)}{%
+#' M_d = (mu_0 - mu_1)' Sigma^-1 (mu_0 - mu_1)}
+#' where \eqn{\mu_0} and \eqn{\mu_1} are the class means in `x` for
+#' class 0 and 1, respectively. This provides an upper bound on the Bayes
+#' error \eqn{\epsilon_bayes} by
+#' \deqn{\epsilon_{bayes} \leq \frac{2 Pr(0) Pr(1)}{1 + Pr(0) Pr(1) M_d}}{%
+#' \epsilon_bayes <= (2 Pr(0) Pr(1)) / (1 + Pr(0) Pr(1) M_d)}
+#' where \eqn{Pr(0)} and \eqn{Pr(1)} are the class probabilities of 0 and
+#' 1.
+#' 
+#' @export
+mahalanobis_bound <- function(x, y) {
+    checkmate::assertMatrix(x, mode = "numeric", any.missing = FALSE)
+    checkmate::assertIntegerish(y, lower = 0, upper = 1)
+    ## Probability weighted covariance matrix
+    ## Empirical class probabilities
+    p_1 <- mean(y)
+    p_0 <- 1 - p_1
+    sigma_0 <- cov(x[y == 0, ])
+    sigma_1 <- cov(x[y == 1, ])
+    sigma <- sigma_0 * p_0 + sigma_1 * p_1
+    ## The Mahalanobis distance in x between class means
+    m_d <- mahalanobis(colMeans(x[y == 0, ]),
+                       colMeans(x[y == 1, ]),
+                       sigma)
+    ## Upper Bound of the Bayes error rate of x
+    upper <- (2 * p_0 * p_1) / (1 + p_0 * p_1 * m_d)
+    names(upper) <- "upper"
+    return(upper)
+}
+
+
+#' Bhattacharyya distance estimate
+#'
+#'@export
+bhattacharyya_bound <- function(x, y) {
+    checkmate::assertMatrix(x, mode = "numeric", any.missing = FALSE)
+    checkmate::assertIntegerish(y, lower = 0, upper = 1)
+    ## Bhattacharyya distance between class conditional distributions
+    x_0 <- x[y == 0, ]
+    x_1 <- x[y == 1, ]
+    mu_0 <- colMeans(x_0)
+    mu_1 <- colMeans(x_1)
+    sigma_0 <- cov(x_0)
+    sigma_1 <- cov(x_1)
+    sigma <- 0.5 * (sigma_0 + sigma_1)
+    rho <- (1/8) * t(mu_1 - mu_0) %*% solve(sigma) %*% (mu_1 - mu_0) +
+        0.5 * log(det(sigma) / sqrt(det(sigma_0) * det(sigma_1)))
+    p_1 <- mean(y)
+    p_0 <- 1 - p_1
+    lower <- 0.5 * ( 1 - sqrt(1 - 4 * p_0 * p_1 * exp(-2 * rho)))
+    upper <- exp(-rho) * sqrt(p_0 * p_1)
+    bounds <- c(lower, upper)
+    names(bounds) <- c("lower", "upper")
+    return(bounds)
+}
+
+#' Nearest Neighbor estimate
+#'
+#' @export
+nearest_neighbor_bound <- function(x, y) {
+    checkmate::assertMatrix(x, mode = "numeric", any.missing = FALSE)
+    checkmate::assertIntegerish(y, lower = 0, upper = 1)
+    e_nn <- MLmetrics::ZeroOneLoss(class::knn.cv(x, y), y)
+    print(e_nn)
+    lower <- 0.5 * (1 - sqrt(1 - 2 * e_nn))
+    upper <- e_nn
+    bounds <- c(lower, upper)
+    names(bounds) <- c("lower", "upper")
+    return(bounds)
 }

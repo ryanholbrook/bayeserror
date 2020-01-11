@@ -1,0 +1,1249 @@
+
+* Decision Boundaries 1: Bayes Optimal Boundaries
+
+** Introduction
+
+Over the next few posts, we will investigate /decision boundaries/. A decision boundary is a graphical representation of the solution to a classification problem. Decision boundaries can help us to understand what kind of solution might be appropriate for a problem. They can also help us to understand the how various machine learning classifiers arrive at a solution.
+
+In this post, we will look at a problem's /optimal/ decision boundary, which we can find when we know exactly how our data was generated. The optimal decision boundary represents the "best" solution possible for that problem. Consequently, by looking at the complexity of this boundary and at how much error it produces, we can get an idea of the inherent difficulty of the problem. 
+
+Unless we have generated the data ourselves, we won't usually be able to find the optimal boundary. Instead, we approximate it using a classifier. A good machine learning classifier tries to approximate the optimal boundary for a problem as closely as possible.
+
+In future posts, we will look at the approximating boundary created by various classifiers. We will investigate the strategy the classifier uses to create this boundary and how this boundary evolves as the classifier is trained on more and more data. There are many classification algorithms available to a data scientist -- regression, discriminant analysis, decision trees, neural networks, to name a few -- and it is important to understand which algorithm is appropritate for the problem at hand. Decision boundaries can help us to do this.
+
+
+** Optimal Boundaries
+
+A classification problem asks: given some observations of a thing, what is the best way to assign it to a class based on some of its features? For instance, we might want to predict whether a person will like a movie or not based on some data we have about them, the "features" of that person.
+
+A solution to the classification problem is a rule that partitions the features and assigns each partition to some class. The "boundary" of this partitioning is the *decision boundary* of the rule.
+
+# TODO image
+
+Often, things with the same features will belong to different classes. (Similar people can have different opinions.)
+
+# TODO image
+
+So often the best that we can do is assign classes /probabilistically/: the more often a set of features occurs in some class, the higher the probability it belongs to that class.
+
+# TODO image
+
+The /optimal/ decision boundary for a problem is the boundary that minimizes the number of misclassifications. This is the boundary for the rule that assigns each observation to its most probable class; that is, whichever class its feature set occurs in most often. (More generally, we could minimize a /loss function/.)
+
+In symbols,
+\[ \hat{y} = \operatorname{argmax}_c P(y = c \mid x) \]
+# TODO check this formula
+where $y$ is the thing we are trying to classify and $x$ is the feature set for that thing.
+
+
+*** Aside
+
+Sometimes, this is also called the "Bayes" optimal boundary since it is the rule that minimizes the Bayes loss of the problem. This remaining loss is called the *Bayes error*. It is a measure of how difficult a classification problem is. This is because /no/ classification rule can ever predict classes on a data set with less error than the Bayes error.
+
+
+** Prepare R
+
+We will use R to do our analysis. First, let's load some packages and set up a nice theme. We'll have a chance to try out `gganimate` and `patchwork`, a couple of newer packages by  which are really nice.
+# TODO lookup author name
+
+#+begin_src R
+library(magrittr)
+library(tidyverse)
+library(ggplot2)
+library(gganimate)
+library(patchwork)
+
+theme_set(theme_linedraw() +
+          theme(plot.title = element_text(size = 20),
+                legend.position = "none",
+                axis.text.x = element_blank(),
+                axis.text.y = element_blank(),
+                axis.title.x = element_blank(),
+                axis.title.y = element_blank(),
+                aspect.ratio = 1))
+#+end_src
+
+*** Plotting Functions
+
+#+begin_src R
+#' Make a sample layer
+#'
+#' @param data data.frame: a sample with continuous features `x` and `y`
+#' grouped by factor `class`
+#' @param classes (optional) a vector of which levels of `class` to
+#' plot; default is to plot data from all classes
+gg_sample <- function(data, classes = NULL, size = 3, alpha = 0.5, ...) {
+    if (is.null(classes)) {
+        subdata <- data
+    } else {
+        subdata <- filter(data, class %in% classes)
+    }
+    list(geom_point(data = subdata,
+                    aes(x, y,
+                        color = factor(class),
+                        shape = factor(class)),
+                    size = size,
+                    alpha = alpha,
+                    ...),
+         scale_colour_discrete(drop = TRUE,
+                               limits = levels(factor(data$class))))
+}
+
+#' Make a density layer
+#'
+#' @param data data.frame: a data grid of features `x` and `y` with contours `z`
+#' @param data character: the name of the contour column 
+gg_density <- function(data, z, size = 1, color = "black", alpha = 1, ...) {
+    z <- ensym(z)
+    geom_contour(data = data,
+                 aes(x, y, z = !!z),
+                 size = size,
+                 color = color,
+                 alpha = alpha,
+                 ...)
+}
+
+#' Make an optimal boundary layer
+#'
+#' @param data data.frame: a data grid of features `x` and `y` with a column with
+#' the `optimal` boundary contours
+#' @param breaks numeric: which contour levels of `optimal` to plot
+gg_optimal <- function(data, breaks = c(0), ...) {
+    gg_density(data, z = optimal, breaks = breaks, ...)
+}
+
+#' Make a layer of component labels for a mixture distribution with two classes
+#'
+#' @param mus list(data.frame): the means for components of each class; every row
+#' is a mean, each column is a coordinate
+#' @param classes (optional) a vector of which levels of class to plot
+gg_mix_label <- function(mus, classes = NULL, size = 10, ...) {
+    ns <- map_int(mus, nrow)
+    component <- do.call(c, map(ns, seq_len))
+    class <- do.call(c, map2(0:(length(ns) - 1), ns, rep.int))
+    mu_all <- do.call(rbind, mus)
+    data <- cbind(mu_all, component, class) %>%
+        set_colnames(c("x", "y", "component", "class")) %>%
+        as_tibble()
+    if (is.null(classes)) {
+        subdata <- data
+    } else {
+        subdata <- filter(data, class %in% classes)
+    }    
+    list(shadowtext::geom_shadowtext(data = subdata,
+                                     mapping = aes(x, y,
+                                                   label = component,
+                                                   color = factor(class)),
+                                     size = size,
+                                     ...),
+         scale_colour_discrete(drop = TRUE,
+                               limits = levels(factor(data$class))))
+}
+
+#+end_src
+
+** Decision Boundaries for Continuous Features
+
+Decision boundaries are most easily visualized whenever we have /continuous/ features, most especially when we have /two/ continuous features, because then the decision boundary will exist in a plane.
+
+With two continuous features, the feature space will form a plane. A decision boundary in this feature space is a set of one or more curves that divide the plane into distinct regions. Inside of a region, all observations will be assigned to the same class.
+
+# image of 1D decision boundaries
+
+It is important to understand that the class a rule assigns to an observation might not be the observation's true class. Whenever an observation exists in a region not its own, it has been /misclassified/.
+
+# image of model error
+
+As mentioned above, whenever we know exactly how our data was generated, we can produce the optimal decision boundary. Though this won't usually be possible in practice, investigating the optimal boundaries produced from simulated data can still help us to understand their properties.
+
+We will look at the optimal boundary for a binary classification problem on a couple of common distributions: the multivariate normal distribution and the mixture of normal distributions.
+
+
+*** Normally Distributed Features
+
+In a binary classification problem, whenever the features for each class jointly have a multivariate normal distribution, the optimal decision boundary is relatively simple. We will start our investigation here.
+
+With two features, the feature space is a plane. It can be shown that the optimal decision boundary in this case will either be a line or a [[https://en.wikipedia.org/wiki/Conic_section][conic section]] (that is, an ellipse, a parabola, or a hyperbola). With higher dimesional feature spaces, the decision boundary will form a [[https://en.wikipedia.org/wiki/Hyperplane][hyperplane]] or a [[https://en.wikipedia.org/wiki/Quadric][quadric surface]].
+
+We will consider classification problems with two classes, $C = {0, 1}$, and two features, $X$ and $Y$. Each class will be Bernoulli distributed and the features for each class will be distributed normally. Specifically,
+
+|----------------------+---------------------------------------------------------------------|
+| Classes              | \( C \sim \operatorname{Bernoulli}(p) \)                            |
+| Features for Class 0 | \( (X, Y) \mid C = 0 \sim \operatorname{Normal}(\mu_0, \Sigma_0) \) |
+| Features for Class 1 | \( (X, Y) \mid C = 1 \sim \operatorname{Normal}(\mu_0, \Sigma_1) \) |
+|----------------------+---------------------------------------------------------------------|
+
+Our goal is to produce two kinds of visualizations: one, of a sample from these distributions, and two, the distribution of the classes over the feature space. We'll use the [[`mvnfast`]] package to help us with computations on the joint MVN.
+
+**** Samples
+
+Let's choose some values for our parameters. We'll start with the case when the classes occur equally often. For our features, we'll choose means so that there is some significant overlap between the two classes, and covariance matrices so that the distributions have a nice elliptical shape.
+
+#+begin_src R
+p <- 0.5
+mu_0 <- c(0, 2)
+sigma_0 <- matrix(c(1, 0.3, 0.3, 1), nrow = 2)
+mu_1 <- c(2, 0)
+sigma_1 <- matrix(c(1, -0.3, -0.3, 1), nrow = 2)
+#+end_src
+
+Now we'll write a function to create a dataframe containing a sample of classified features from our distribution.
+
+#+begin_src R
+#' Generate normally distributed feature samples for a binary
+#' classification problem
+#'
+#' @param n integer: the size of the sample
+#' @param mean_0 vector: the mean vector of the first class
+#' @param sigma_0 matrix: the 2x2 covariance matrix of the first class
+#' @param mean_1 vector: the mean vector of the second class
+#' @param sigma_1 matrix: the 2x2 covariance matrix of the second class
+#' @param p_0 double: the prior probability of class 0
+make_mvn_sample <- function(n, mu_0, sigma_0, mu_1, sigma_1, p_0) {
+    n_0 <- rbinom(1, n, p_0)
+    n_1 <- n - n_0
+    sample_mvn <- as_tibble(
+        rbind(mvnfast::rmvn(n_0,
+                            mu = mu_0,
+                            sigma = sigma_0),
+              mvnfast::rmvn(n_1,
+                            mu = mu_1,
+                            sigma = sigma_1)))
+    sample_mvn[1:n_0, 3] <- 0
+    sample_mvn[(n_0 + 1):(n_0 + n_1), 3] <- 1
+    colnames(sample_mvn) <- c("x", "y", "class")
+    sample_mvn
+}
+
+#+end_src
+
+Finally, we'll create a sample of 4000 points and plot the result.
+
+#+begin_src R
+n <- 4000
+set.seed(31415)
+sample_mvn <- make_mvn_sample(n,
+                              mu_0, sigma_0,
+                              mu_1, sigma_1,
+                              p)
+
+ggplot() +
+    gg_sample(sample_mvn) +
+    coord_fixed()
+#+end_src
+
+It should be apparent that because of the overlap in these distributions, any decision rule will necessarily misclassify some observations fairly often.
+
+
+**** Classes on the Feature Space
+
+Next, we will produce some contour plots of our feature distributions. Let's write a function to generate class probabilities at any observation $(x, y)$ in the feature space; we will model the optimal decision boundary as those points where the posterior probabilities of the two classes are equal, that is, where 
+\[ P(X, Y \mid C = 0) P(C = 0) - P(X, Y \mid C = 1) P(C = 1) = 0 \].
+
+#+begin_src R
+#' Make an optimal prediction at a point from two class distributions
+#'
+#' @param x vector: input
+#' @param p_0 double: prior probability of class 0
+#' @param dfun_0 function(x): density of features of class 0
+#' @param dfun_1 function(x): density of features of class 1
+optimal_predict <- function(x, p_0, dfun_0, dfun_1) {
+    ## Prior probability of class 1
+    p_1 <- 1 - p_0
+    ## Conditional probability of (x, y) given class 0
+    p_x_0 <- dfun_0(x)
+    ## Conditional probability of (x, y) given class 1
+    p_x_1 <- dfun_1(x)
+    ## Conditional probability of class 0 given (x, y)
+    p_0_xy <- p_x_0 * p_0
+    ## Conditional probability of class 1 given (x, y)
+    p_1_xy <- p_x_1 * p_1
+    optimal <- p_1_xy - p_0_xy
+    class <- ifelse(optimal > 0, 1, 0)
+    result <- c(p_0_xy, p_1_xy, optimal, class)
+    names(result) <- c("p_0_xy", "p_1_xy", "optimal", "class")
+    result
+}
+
+#' Construct a dataframe with posterior class probabilities and the
+#' optimal decision boundary over a grid on the feature space
+#' 
+#' @param mean_0 vector: the mean vector of the first class
+#' @param sigma_0 matrix: the 2x2 covariance matrix of the first class
+#' @param mean_1 vector: the mean vector of the second class
+#' @param sigma_1 matrix: the 2x2 covariance matrix of the second class
+#' @param p_0 double: the prior probability of class 0
+make_density_mvn <- function(mean_0, sigma_0, mean_1, sigma_1, p_0,
+                             x_min, x_max, y_min, y_max, delta = 0.05) {
+    x <- seq(x_min, x_max, delta)
+    y <- seq(y_min, y_max, delta)
+    density_mvn <- expand.grid(x, y)
+    names(density_mvn) <- c("x", "y")
+    dfun_0 <- function(x) mvnfast::dmvn(x, mu_0, sigma_0)
+    dfun_1 <- function(x) mvnfast::dmvn(x, mu_1, sigma_1)
+    optimal_mvn <- function(x, y) optimal_predict(c(x, y), p_0, dfun_0, dfun_1)
+    density_mvn <-as.tibble(
+        cbind(density_mvn,
+              t(mapply(optimal_mvn,
+                       density_mvn$x, density_mvn$y))))
+    density_mvn
+}
+
+#+end_src
+
+
+Now we can generate a grid of points and compute posterior class probabilities over that grid. By plotting these probabilities, we can get describe both the conditional feature distributions for each class as well as the joint feature distribution.
+
+#+begin_src R
+density_mvn <- make_density_mvn(mu_0, sigma_0, mu_1, sigma_1, p,
+                                -3, 5, -3, 5)
+
+(ggplot() +
+ gg_sample(sample_mvn, alpha = 0.1) +
+ gg_density(density_mvn, z = p_0_xy) +
+ gg_density(density_mvn, z = p_1_xy) +
+ ggtitle("Conditional Distributions")) +
+(ggplot() +
+ gg_sample(sample_mvn, alpha = 0.1) +
+ geom_contour(data = density_mvn,
+              aes(x = x, y = y, z = p_0_xy + p_1_xy),
+              size = 1,
+              color = "black") +
+ ggtitle("Joint Distribution"))
+
+#+end_src
+
+
+**** The Optimal Decision Boundary
+
+Now let's add a plot for the optimal decision boundary for this problem. Notice how the boundary runs through the points where the contours of the two conditional distributions intersect. These points of intersection are where the classes have equal posterior probability.
+
+#+begin_src R
+(ggplot() +
+ gg_density(density_mvn, z = p_0_xy,
+            alpha = 0.25) +
+ gg_density(density_mvn, z = p_1_xy,
+            alpha = 0.25) +
+ gg_optimal(density_mvn)) +
+(ggplot() +
+ gg_sample(sample_mvn, alpha = 0.25) +
+ gg_optimal(density_mvn))
+
+#+end_src
+
+
+*** Mixture of MVNs
+
+The features of each class might also be modeled as a /mixture/ of normal distributions. In description, at least, the problem is still relatively simple. The possible decision boundaries produced, however, can be quite complex. This is a much more difficult problem.
+
+For our examples, we will generate the data as follows:
+|---------------------------------+-----------------------------------------------------------------------------------------------------------------------|
+| Classes                         | \( C \sim Bernoulli(p) \)                                                                                             |
+| Mean of Means for Class 0       | \( \nu_0 \sim Normal((0, 1), I) \)                                                                                    |
+| Mean of Means for Class 1       | \( \nu_0 \sim Normal((1, 0), I) \)                                                                                    |
+| Means of Components for Class 0 | \( \mu_{0, i=1, \ldots, n_0} \sim Normal(\nu_0, I) \)                                                                 |
+| Means of Components for Class 1 | \( \mu_{1, i=1, \ldots, n_1} \sim Normal(\nu_1, I) \)                                                                 |
+| Features for Class 0            | \( (X, Y) \mid C = 0 \sim w_{0, 1} Normal(\mu_{0, 1}, \Sigma_0) + \cdots + w_{0, l_0} Normal(\mu_{0, 0}, \Sigma_0) \) |
+| Features for Class 1            | \( (X, Y) \mid C = 1 \sim w_{1, 1} Normal(\mu_{0, 0}, \Sigma_1) + \cdots + w_{1, l_1} Normal(\mu_{0, 0}, \Sigma_1) \) |
+|---------------------------------+-----------------------------------------------------------------------------------------------------------------------|
+
+where $n_0$ is the number of components for class 0, $w_{0, i}$ are the weights on each component, $\Sigma_0 = \frac{1}{2 * l_0} I$, and $I$ is the identity matrix; similarly for class 1.
+
+This is a bit awful, but we are basically doing this: For each class,
+1. Choose the number of components to go in the mixture.
+2. Choose a mean for each component by sampling from a normal distribution.
+3. Generate the sample from a weighted mixture of these components.
+
+**** Samples
+
+The computations for the mixture of MVNs are fairly similar to the ones we did before. First let's define a sampling function.
+
+#+begin_src R
+make_mix_sample <- function(n,
+                            nu_0, tau_0, n_0, sigma_0, w_0,
+                            nu_1, tau_1, n_1, sigma_1, w_1,
+                            p_0) {
+    ## Number of Components for Each Class
+    l_0 <- length(w_0)
+    l_1 <- length(w_1)
+    ## Component Means
+    mu_0 <- mvnfast::rmvn(n = l_0,
+                          mu = nu_0, sigma = tau_0)
+    mu_1 <- mvnfast::rmvn(n = l_1,
+                          mu = nu_1, sigma = tau_1)
+    ## Class Frequency in the Sample
+    n_0 <- rbinom(1, n, p_0)
+    n_1 <- n - n_0
+    ## Features
+    f_0 <- mvnfast::rmixn(n = n_0,
+                          mu = mu_0, sigma = sigma_0, w = w_0,
+                          retInd = TRUE)
+    c_0 <- attr(f_0, "index")
+    f_1 <- mvnfast::rmixn(n = n_1,
+                          mu = mu_1, sigma = sigma_1, w = w_1,
+                          retInd = TRUE)
+    c_1 <- attr(f_1, "index")
+    sample_mix <- as.data.frame(rbind(f_0, f_1))
+    sample_mix[, 3] <- c(c_0, c_1)
+    ## Define Classes
+    sample_mix[1:n_0, 4] <- 0
+    sample_mix[(n_0 + 1):(n_0 + n_1), 4] <- 1
+    names(sample_mix) <- c("x", "y", "component", "class")
+    ## Store Component Means
+    attr(sample_mix, "mu_0") <- mu_0
+    attr(sample_mix, "mu_1") <- mu_1
+    sample_mix
+}
+
+#+end_src
+
+Now we'll define the parameters, construct a sample, and look at the result.
+
+#+begin_src R
+
+## Bernoulli parameter for class distribution
+p = 0.5
+## Mean of component means
+nu_0 = c(0, 1)
+nu_1 = c(1, 0)
+## Covariance for component means
+tau_0 = matrix(c(1, 0, 0, 1), nrow = 2)
+tau_1 = matrix(c(1, 0, 0, 1), nrow = 2)
+## Number of components for each class
+n_0 <- 10
+n_1 <- 10
+## Covariance for each class
+sigma_0 <- replicate(n_0, matrix(c(1, 0, 0, 1), 2) / n_0 * 2,
+                     simplify = FALSE)
+sigma_1 <- replicate(n_1, matrix(c(1, 0, 0, 1), 2) / n_1 * 2,
+                     simplify = FALSE)
+## Weights of mixture components
+w_0 <- rep(1 / n_0, n_0)
+w_1 <- rep(1 / n_1, n_1)
+
+## Sample size
+n <- 4000
+set.seed(31)
+sample_mix <- make_mix_sample(n,
+                              nu_0, tau_0, n_0, sigma_0, w_0,
+                              nu_1, tau_1, n_1, sigma_1, w_1,
+                              p)
+## Retrieve the generated component means
+mu_0 <- attr(sample_mix, "mu_0")
+mu_1 <- attr(sample_mix, "mu_1")
+
+ggplot() +
+    gg_sample(sample_mix) +
+    ggtitle("Sample of Mixture Distribution")
+
+ggplot() +
+    gg_sample(sample_mix) +
+    gg_mix_label(list(mu_0, mu_1)) +
+    facet_wrap(vars(class)) +
+    ggtitle("Feature Components")
+
+#+end_src
+
+We've labelled the component means for each class. (There are 10 components for class 0, and 10 components for class 1.) Around each of these labels is a sample from a normal distribution.
+
+**** Classes on the Feature Space
+
+Now we'll compute class probabilities on the feature space.
+
+#+begin_src R
+boundary_mix <- function(x, y,
+                         mean_0, sigma_0, w_0,
+                         mean_1, sigma_1, w_1,
+                         p_0) {
+    p_1 <- 1 - p_0
+    p_x_0 <- mvnfast::dmixn(X = matrix(c(x, y), nrow = 1),
+                             mu = mean_0,
+                             sigma = sigma_0,
+                             w = w_0)
+    p_xy_1 <- mvnfast::dmixn(X = matrix(c(x, y), nrow = 1),
+                             mu = mean_1,
+                             sigma = sigma_1,
+                             w = w_1)
+    p_0_xy <- p_x_0 * p_0
+    p_1_xy <- p_xy_1 * p_1
+    boundary <- p_1_xy - p_0_xy
+    return(c(p_0_xy, p_1_xy, boundary))
+}
+
+make_density_mix <- function(mean_0, sigma_0, w_0,
+                             mean_1, sigma_1, w_1, p_0,
+                             x_min, x_max, y_min, y_max, delta = 0.05) {
+    x <- seq(x_min, x_max, delta)
+    y <- seq(y_min, y_max, delta)
+    density_mix <- expand.grid(x, y)
+    names(density_mix) <- c("x", "y")
+    density_mix <- cbind(density_mix,
+                         t(mapply(
+                             function(x, y)
+                                 boundary_mix(x, y,
+                                              mean_0, sigma_0, w_0,
+                                              mean_1, sigma_1, w_1,
+                                              p_0),
+                             density_mix[, 1], density_mix[, 2])))
+    names(density_mix) <- c("x", "y", "p_0_xy", "p_1_xy", "optimal")
+    density_mix[, "class"] <- ifelse(density_mix[, "optimal"] > 0, 1, 0)
+    density_mix
+}
+
+density_mix <- make_density_mix(mu_0, sigma_0, w_0, mu_1, sigma_1, w_1, p,
+                                -3, 5, -3, 5)
+
+(ggplot() +
+ gg_sample(sample_mix, classes = 0,
+           alpha = 0.1) +
+ gg_density(density_mix, z = p_0_xy) +
+ gg_mix_label(list(mu_0, mu_1), classes = 0) +
+ ggtitle("Density of Class 0")) +
+(ggplot() +
+ gg_sample(sample_mix, classes = 1,
+           alpha = 0.1) +
+ gg_density(density_mix, z = p_1_xy) +
+ gg_mix_label(list(mu_0, mu_1), classes = 1) +
+ ggtitle("Density of Class 1")) +
+(ggplot() +
+ gg_sample(sample_mix,
+           alpha = 0.1) +
+ geom_contour(data = density_mix,
+              aes(x = x, y = y, z = p_0_xy + p_1_xy),
+              color = "black",
+              size = 1) +
+ ggtitle("Joint Density"))
+
+#+end_src
+
+** The Optimal Decision Boundary
+
+And here is the optimal decision boundary for this problem. Notice how again the boundary runs through points of intersection in the two conditional distributions, and how it separates the classes of observations in the sample.
+
+#+begin_src R
+(ggplot() +
+ gg_density(density_mix, z = p_0_xy,
+            alpha = 0.25) +
+ gg_density(density_mix, z = p_1_xy,
+            alpha = 0.25) +
+ gg_optimal(density_mix)) +
+(ggplot() +
+ gg_sample(sample_mix, alpha = 0.25) +
+ gg_optimal(density_mix))
+#+end_src
+
+** Unequal Class Frequency
+
+So far, we've only seen the case where the two classes occur about equally often. If one class has a lower probability of occuring (say class 1), and the costs of misclassification into each class are the same, then the optimal decision boundary must move toward the class 1 distribution in order to equalize the misclassification loss on either side.
+
+To see this change, we will use the `gganimate` package to produce an animation showing how the optimal boundary changes as the Bernoulli parameter (the frequency of class 0) changes from 0.1 to 0.9.
+
+#+begin_src R
+density_p0 <-
+    map_dfr(seq(0.1, 0.9, 0.005),
+            function(p_0)
+                make_density_mvn(mu_0, sigma_0, mu_1, sigma_1,
+                                 p_0, -3, 5, -3, 5) %>%
+                mutate(p_0 = p_0))
+
+anim <- ggplot() +
+    geom_contour(data = density_p0,
+                 aes(x = x, y = y, z = p_0_xy + p_1_xy),
+                 color = "black",
+                 size = 1,
+                 alpha = 0.25) +
+    gg_optimal(density_p0) +
+    transition_manual(p_0) +
+    ggtitle("Proportion of Class 0: {current_frame}")
+
+anim <- animate(anim, renderer = gifski_renderer(),
+                width = 800, height = 800)
+
+anim_save("/home/jovyan/work/bayeserror/density_mvn.gif", animation = anim)
+
+anim
+
+density_mix_p0 <-
+    map_dfr(seq(0.1, 0.9, 0.005),
+            function(p_0)
+                make_density_mix(mu_0, sigma_0, w_0, mu_1, sigma_1, w_1,
+                                 p_0, -3, 5, -3, 5) %>%
+                mutate(p_0 = p_0))
+anim <- ggplot() +
+    geom_contour(data = density_mix_p0,
+                 aes(x = x, y = y, z = p_0_xy + p_1_xy),
+                 color = "black",
+                 size = 1,
+                 alpha = 0.25) +
+    gg_optimal(density_mix_p0) +
+    transition_manual(p_0) +
+    ggtitle("Proportion of Class 0: {current_frame}")
+
+anim <- animate(anim, renderer = gifski_renderer(),
+                width = 800, height = 800)
+
+anim_save("/home/jovyan/work/bayeserror/density_mix.gif", animation = anim)
+
+anim
+
+#+end_src
+
+# anim_save("/home/jovyan/work/bayeserror/density.gif", animation = anim)
+
+* Classifiers
+
+Looking at the decision boundary a classifier generates can give us some geometric intuition about the decision rule a classifier uses and how this decision rule changes as the classifier is trained on more data. 
+
+** Plotting Functions
+
+#+begin_src R
+gg_plot_boundary <- function(density, points, title = "") {
+    ggplot() +
+    geom_point(data = points,
+               aes(x, y,
+                   color = factor(class),
+                   shape = factor(class)),
+               size = 3,
+               alpha = 0.5) +
+    geom_contour(data = density,
+                 aes(x, y, z = optimal),
+                 breaks = c(0),
+                 color = "black",
+                 size = 1,
+                 linetype = 2) +
+    geom_contour(data = density,
+                 aes(x, y, z = fitted),
+                 breaks = c(0.5),
+                 color = "black",
+                 size = 1) +
+    coord_fixed(expand = FALSE) +
+    xlim(min(density$x), max(density$y)) +
+    ylim(min(density$y), max(density$y)) +
+    ggtitle(title) +
+    theme_linedraw() +
+    theme(plot.title = element_text(hjust = 0.5, size = 20),
+          legend.position = "none",
+          axis.text.x = element_blank(),
+          axis.text.y = element_blank(),
+          axis.title.x = element_blank(),
+          axis.title.y = element_blank())
+}
+
+fit_glm_points <- glm(class ~ x + y, data = sample_mvn, family = binomial)
+pred_glm_points <- predict(fit_glm_points, newdata = density_mvn, type = "response")
+density_glm_points <- cbind(density_mvn, "fitted" = pred_glm_points)
+gg_plot_boundary(density_glm_points, sample_mvn, "Logistic")
+
+
+
+#+end_src
+
+*** Animation
+
+#+begin_src R
+
+##' Animate the evolution of a decision boundary as the sample size grows
+##'
+##' @param sample `data.frame`: the complete sample data; should have
+##'     columns `x`, `y`, and `class`
+##' @param density `data.frame`: the density distribution of `x` and
+##'     `y`; should have columns `x`, `y`, and `optimal`, the contours
+##'     of the optimal decision distribution
+##' @param delta `integer`: how many points to add at each step of the
+##'     animation
+##' @param fit_and_predict `function(sample, density)`: fits a learner
+##'     to the sample data and returns its predictions on the density
+animate_boundary <- function(sample, density, delta, fit_and_predict) {
+    ## a data.frame with successive groups of `data` of size `delta`;
+    ## `data` is randomized before sequencing
+    sequence_data <- function(data, delta) {
+        rows <- nrow(data)
+        n <- rows / delta
+        data <- data[sample(nrow(data)), ]
+        go <- function(i) {
+            h <- min(i * delta, rows)
+            bind_cols(
+                head(data, h),
+                group = rep.int(i, h))
+        }
+        sequenced <- bind_rows(lapply(1:n, go))
+        return(sequenced)
+    }
+    ## Sequence the sample data
+    sample_sequenced <- sequence_data(sample, delta)
+    ## Sequence the density data and attach predictions from the sample
+    density_sequenced <- sample_sequenced %>%
+        group_by(group) %>%
+        group_modify(~ fit_and_predict(.x, density)) %>%
+        ungroup()
+    ## Define the animation
+    anim <- ggplot() +
+        ## Plot the sample
+        geom_point(data = sample_sequenced,
+                   aes(x = x, y = y,
+                       color = factor(class),
+                       shape = factor(class)),
+                   size = 3,
+                   alpha = 0.5) +
+        ## Plot the optimal decision boundary
+        geom_contour(data = density_sequenced,
+                     aes(x, y, z = optimal),
+                     breaks = c(0),
+                     color = "black",
+                     size = 1,
+                     linetype = 2) +
+        ## Plot the fitted decision boundary
+        geom_contour(data = density_sequenced,
+                     aes(x, y, z = fitted),
+                     breaks = c(0.5),
+                     color = "black",
+                     size = 1) +
+        coord_fixed(expand = FALSE) +
+        xlim(min(density$x), max(density$y)) +
+        ylim(min(density$y), max(density$y)) +
+        theme_linedraw() +
+        theme(plot.title = element_text(hjust = 0.5, size = 20),
+              legend.position = "none",
+              axis.text.x = element_blank(),
+              axis.text.y = element_blank(),
+              axis.title.x = element_blank(),
+              axis.title.y = element_blank()) +
+        ## Animate the sample and the fitted boundary
+        transition_manual(group)
+    anim <- animate(anim, renderer = gifski_renderer(),
+                    width = 800, height = 800)
+    return(anim)
+}
+
+#+end_src
+
+*** Lattice plots
+
+#+begin_src R
+
+lattice_plot_boundary <- function(density, sample, title) {
+    fitted_class <- ifelse(density[, "fitted"] > 0, 1, 0)
+    lattice::xyplot(y ~ x, groups = fitted_class,
+                    data = density,
+                    cex = 1, pch = 20, alpha = 0.1,
+                    aspect = 1) +
+    lattice::contourplot(optimal ~ x + y,
+                         data = density,
+                         at = c(0),
+                         labels = FALSE,
+                         lwd = 3,
+                         lty = 2,
+                         aspect = 1,
+                         main = title) +
+    lattice::contourplot(fitted ~ x + y,
+                         data = density,
+                         at = c(0),
+                         labels = FALSE,
+                         lwd = 3) +
+    lattice::xyplot(y ~ x, groups = class,
+                    data = sample,
+                    pch = 19, alpha = 0.5)
+}
+
+
+lattice::levelplot(p_0 ~ x + y,
+                   contour = TRUE,
+                   region = FALSE,
+                   cuts = 10,
+                   data = density_mvn,
+                   aspect = 1) +
+    lattice::levelplot(p_1 ~ x + y,
+                       contour = TRUE,
+                       region = FALSE,
+                       cuts = 10,
+                       data = density_mvn)
+
+lattice::levelplot(optimal ~ x + y,
+                   data = density_mvn,
+                   aspect = 1,
+                   cuts = 20,
+                   contour = TRUE) +
+    lattice::contourplot(optimal ~ x + y,
+                         data = density_mvn,
+                         at = c(0),
+                         labels = FALSE,
+                         lwd = 3)
+
+lattice::levelplot(p_0 ~ x + y,
+                   contour = TRUE,
+                   region = FALSE,
+                   cuts = 5,
+                   data = density_mvn,
+                   aspect = 1) +
+    lattice::levelplot(p_1 ~ x + y,
+                       contour = TRUE,
+                       region = FALSE,
+                       cuts = 5,
+                       data = density_mvn) +
+    lattice::contourplot(optimal ~ x + y,
+                         data = density_mvn,
+                         at = c(0),
+                         labels = FALSE,
+                         lwd = 3)
+    
+lattice::contourplot(optimal ~ x + y,
+                     data = density_mvn,
+                     at = c(0),
+                     labels = FALSE,
+                     lwd = 3,
+                     aspect = 1) +
+    lattice::xyplot(y ~ x, groups = class, data = points)
+
+#+end_src
+
+** Animate
+
+#+begin_src R
+
+
+fit_and_predict_knn <- function(sample, density) {
+    pred_knn <- class::knn(train = sample[, c("x", "y")],
+                           cl = factor(sample$class),
+                           test = density[, c("x", "y")],
+                           k = 5)
+    density_knn <- cbind(density,
+                         fitted = as.integer(pred_knn) - 1.5)
+    return(density_knn)
+}
+
+anim <- animate_boundary(sample_mvn, density_mvn, 10, fit_and_predict_knn)
+anim_save("/home/jovyan/work/bayeserror/knn.gif", animation = anim)
+
+anim <- animate_boundary(sample_mix, density_mix, 10, fit_and_predict_nn)
+anim_save("/home/jovyan/work/bayeserror/knn_mix.gif", animation = anim)
+
+
+fit_and_predict_rf <- function(sample, density) {
+    fit_rf <- ranger::ranger(factor(class) ~ x + y,
+                             data = sample,
+                             probability = TRUE)
+    pred_rf <- predict(fit_rf, data = density)
+    density_rf <- cbind(density, "fitted" = pred_rf$predictions[, "1"])
+    return(density_rf)
+}
+
+anim <- animate_boundary(sample_mvn, density_mvn, 10, fit_and_predict_rf)
+anim_save("/home/jovyan/work/bayeserror/rf.gif")
+
+anim <- animate_boundary(sample_mix, density_mix, 10, fit_and_predict_rf)
+anim_save("/home/jovyan/work/bayeserror/rf_mix.gif")
+
+
+fit_and_predict_elm <- function(sample, density) {
+    set.seed(31415)
+    fit_elm <- elmNNRcpp::elm_train(x = as.matrix(sample[, c("x", "y")]),
+                                    y = elmNNRcpp::onehot_encode(sample[["class"]]),
+                                    nhid = 10,
+                                    actfun = "sig")
+    pred_elm <- elmNNRcpp::elm_predict(fit_elm,
+                                       as.matrix(density[, c("x", "y")]))
+    density_elm <- cbind(density, "fitted" = pred_elm[, 1])
+    return(density_elm)
+}
+
+anim <- animate_boundary(sample_mvn, density_mvn, 10, fit_and_predict_elm)
+anim_save("/home/jovyan/work/bayeserror/elm.gif")
+
+anim <- animate_boundary(sample_mix, density_mix, 10, fit_and_predict_elm)
+anim_save("/home/jovyan/work/bayeserror/elm_mix.gif")
+
+
+fit_and_predict_xgboost <- function(sample, density) {
+    set.seed(31415)
+    sample_xg <- xgboost::xgb.DMatrix(
+                              as.matrix(sample[, c("x", "y")]),
+                              label = as.numeric(sample$class))
+    xgcv <- xgboost::xgb.cv(data = sample_xg,
+                            nrounds = 50,
+                            early_stopping_rounds = 3,
+                            nfold = 5,
+                            objective = "binary:logistic",
+                            verbose = 0)
+    fit_xg <- xgboost::xgboost(data = sample_xg,
+                               nrounds = xgcv$best_iteration,
+                               objective = "binary:logistic",
+                               verbose = 0)
+    pred_xg <- predict(fit_xg, newdata = as.matrix(density[, c("x", "y")]))
+    density_xg <- cbind(density, "fitted" = pred_xg)
+    return(density_xg)
+}
+
+anim <- animate_boundary(sample_mvn, density_mvn, 10, fit_and_predict_xgboost)
+
+anim_save("/home/jovyan/work/bayeserror/xgboost.gif")
+
+
+#+end_src
+
+
+** Regression Models
+
+*** Linear
+
+#+begin_src R
+
+fit_lm <- lm(class ~ x + y, data = sample_mvn)
+pred_lm <- predict(fit_lm, newdata = density_mvn)
+density_lm <- cbind(density_mvn, "fitted" = pred_lm - 0.5)
+gg_plot_boundary(density_lm, sample_mvn, "Linear")
+
+## class_lm <- ifelse(pred_lm > 0, 1, 0)
+
+## confusion_lm <- table(density[, "class"],
+##                    density[, "class_lm"],
+##                    dnn = c("True", "Predicted"))
+
+## fourfoldplot(confusion_lm, main = "Linear")
+
+#+end_src
+
+*** Logistic
+
+#+begin_src R
+
+fit_glm <- glm(class ~ x + y, data = sample_mvn, family = binomial)
+pred_glm <- predict(fit_glm, newdata = density_mvn, type = "response")
+density_glm <- cbind(density_mvn, "fitted" = pred_glm - 0.5)
+gg_plot_boundary(density_glm, sample_mvn, "Logistic")
+
+fit_glm <- glm(class ~ x + y, data = sample_mix, family = binomial)
+pred_glm <- predict(fit_glm, newdata = density_mix, type = "response")
+density_glm <- cbind(density_mix, "fitted" = pred_glm - 0.5)
+gg_plot_boundary(density_glm, sample_mix, "Logistic")
+
+
+fit_and_predict_glm <- function(sample, density) {
+    fit_glm <- glm(class ~ x + y, data = sample, family = binomial)
+    pred_glm <- predict(fit_glm, newdata = density_mvn, type = "response")
+    density_glm <- cbind(density, fitted = pred_glm)
+    return(density_glm)
+}
+
+anim <- animate_boundary(sample_mvn, density_mvn, 10, fit_and_predict_glm)
+anim_save("/home/jovyan/work/bayeserror/glm_mvn.gif", animation = anim)
+
+anim <- animate_boundary(sample_mix, density_mix, 10, fit_and_predict_glm)
+anim_save("/home/jovyan/work/bayeserror/glm_mix.gif", animation = anim)
+
+#+end_src
+
+*** Logistic GAM
+
+#+begin_src R
+
+fit_gam <- mgcv::gam(class ~ s(x, y), class = "bernoulli", data = sample_mvn)
+pred_gam <- predict(fit_gam, newdata = density_mvn, type = "response")
+density_gam <- cbind(density_mvn, "fitted" = as.numeric(pred_gam) - 0.5)
+gg_plot_boundary(density_gam, sample_mvn, title = "GAM")
+
+
+fit_gam <- mgcv::gam(class ~ s(x, y), class = "bernoulli", data = sample_mix)
+pred_gam <- predict(fit_gam, newdata = density_mix, type = "response")
+density_gam <- cbind(density_mix, "fitted" = as.numeric(pred_gam) - 0.5)
+gg_plot_boundary(density_gam, sample_mix, title = "GAM")
+
+
+#+end_src
+
+** Splines and Smoothers
+
+*** MARS
+
+#+begin_src R
+
+fit_mars <- earth::earth(factor(class) ~ x + y,
+                         data = sample_mvn,
+                         glm = list(family = "binomial"))
+pred_mars <- predict(fit_mars, newdata = density_mvn, type = "response")
+density_mars <- cbind(density_mvn, "fitted" = as.numeric(pred_mars) - 0.5)
+gg_plot_boundary(density_mars, sample_mvn, title = "MARS")
+
+
+fit_mars <- earth::earth(factor(class) ~ x + y,
+                         data = sample_mix,
+                         glm = list(family = "binomial"))
+pred_mars <- predict(fit_mars, newdata = density_mix, type = "response")
+density_mars <- cbind(density_mix, "fitted" = as.numeric(pred_mars) - 0.5)
+gg_plot_boundary(density_mars, sample_mix, title = "MARS")
+
+
+#+end_src
+
+*** Poly-MARS
+
+#+begin_src R
+
+fit_pmars <- polspline::polymars(sample_mvn[["class"]],
+                                 sample_mvn[, c("x", "y")],
+                                 classify = TRUE)
+pred_pmars <- predict(fit_pmars,
+                      x = density_mvn[, c("x", "y")])
+density_pmars <- cbind(density_mvn, "fitted" = pred_pmars[, 2] - 0.5)
+gg_plot_boundary(density_pmars, sample_mvn, title = "PolyMARS")
+
+
+fit_pmars <- polspline::polymars(sample_mix[["class"]],
+                                 sample_mix[, c("x", "y")],
+                                 classify = TRUE)
+pred_pmars <- predict(fit_pmars,
+                      x = density_mix[, c("x", "y")])
+density_pmars <- cbind(density_mix, "fitted" = pred_pmars[, 2] - 0.5)
+gg_plot_boundary(density_pmars, sample_mix, title = "PolyMARS")
+
+#+end_src
+
+** Discriminant Analysis
+
+*** Linear Discriminant Analysis
+
+#+begin_src R
+
+fit_lda <- MASS::lda(class ~ x + y, data = density_mvn)
+pred_lda <- predict(fit_lda, newdata = density_mvn)
+density_lda <- cbind(density_mvn, "fitted" = pred_lda$posterior[, "1"] - 0.5)
+
+#+end_src
+
+*** Quadratic Discriminant Analysis
+
+#+begin_src R
+
+fit_qda <- MASS::qda(class ~ x + y, data = density_mvn)
+pred_qda <- predict(fit_qda, newdata = density_mvn)
+density_qda <- cbind(density_mvn, "fitted" = pred_qda$posterior[, "1"] - 0.5)
+gg_plot_boundary(density_qda, sample_mvn, title = "QDA")
+
+fit_qda_points <- MASS::qda(class ~ x + y, data = sample_mvn)
+pred_qda_points <- predict(fit_qda_points, newdata = density_mvn)
+density_qda_points <- cbind(density_mvn, "fitted" = pred_qda_points$posterior[, "1"] - 0.5)
+gg_plot_boundary(density_qda_points, sample_mvn, title = "QDA")
+
+#+end_src
+
+*** Mixture Discriminant Analysis
+
+** Nearest Neighbors
+
+#+begin_src R
+
+pred_nn <- class::knn(train = sample_mvn[, c("x", "y")],
+                             cl = factor(sample_mvn[, "class"]),
+                             test = density_mvn[, c("x", "y")],
+                             k = 5)
+density_nn <- cbind(density_mvn, "fitted" = as.integer(pred_nn) - 2)
+gg_plot_boundary(density_nn, sample_mvn, title = "Nearest Neighbors")
+
+
+pred_nn <- class::knn(train = sample_mix[, c("x", "y")],
+                      cl = factor(sample_mix[, "class"]),
+                      test = density_mix[, c("x", "y")],
+                      k = 5)
+density_nn <- cbind(density_mix, "fitted" = as.integer(pred_nn) - 2)
+gg_plot_boundary(density_nn, sample_mvn, title = "Nearest Neighbors")
+
+
+#+end_src
+
+*** Kernel NN
+
+#+begin_src R
+
+fit_kknn <- kknn::train.kknn(factor(class) ~ x + y,
+                             data = sample_mvn,
+                             kernel = "gaussian")
+pred_kknn <- predict(fit_kknn, newdata = density_mvn, type = "prob")
+density_kknn <- cbind(density_mvn, "fitted" = pred_kknn[, 2] - 0.5)
+gg_plot_boundary(density_kknn, sample_mvn, title = "KKNN")
+
+#+end_src
+
+** Support Vector Machines
+
+#+begin_src R
+
+fit_svm <- kernlab::ksvm(factor(class) ~ x + y,
+                         data = density_mvn,
+                         kernel = "rbfdot",
+                         prob.model = TRUE)
+pred_svm <- kernlab::predict(fit_svm,
+                             newdata = density_mvn,
+                             type = "probabilities")
+density_svm <- cbind(density_mvn, "fitted" = pred_svm[, "1"] - 0.5)
+gg_plot_boundary(density_svm, sample_mvn, title = "SVM")
+
+
+fit_svm_points <- kernlab::ksvm(factor(class) ~ x + y,
+                                data = sample_mvn,
+                                kernel = "rbfdot",
+                                prob.model = TRUE)
+pred_svm_points <- kernlab::predict(fit_svm_points,
+                                    newdata = density_mvn,
+                                    type = "probabilities")
+density_svm_points <- cbind(density_mvn, "fitted" = pred_svm_points[, "1"] - 0.5)
+gg_plot_boundary(density_svm_points, sample_mvn, title = "SVM")
+
+
+
+fit_svm <- kernlab::ksvm(factor(class) ~ x + y,
+                         data = sample_mix,
+                         kernel = "rbfdot",
+                         prob.model = TRUE)
+pred_svm <- kernlab::predict(fit_svm,
+                             newdata = density_mix,
+                             type = "probabilities")
+density_svm <- cbind(density_mix, "fitted" = pred_svm[, "1"] - 0.5)
+gg_plot_boundary(density_svm, sample_mix, title = "SVM")
+
+
+#+end_src
+
+** Trees
+*** Decision Trees
+
+#+begin_src R
+
+fit_rpart_points <- rpart::rpart(class ~ x + y, data = sample_mvn, method = "class")
+pred_rpart_points <- predict(fit_rpart_points, newdata = density_mvn)
+density_rpart_points <- cbind(density_mvn, "fitted" = pred_rpart_points[, "1"] - 0.5)
+gg_plot_boundary(density_rpart_points, sample_mvn, title = "Decision Tree")
+
+fit_rpart <- rpart::rpart(class ~ x + y, data = sample_mix, method = "class")
+pred_rpart <- predict(fit_rpart, newdata = density_mix)
+density_rpart <- cbind(density_mix, "fitted" = pred_rpart[, "1"] - 0.5)
+gg_plot_boundary(density_rpart, sample_mix, title = "Decision Tree")
+
+#+end_src
+
+*** Bagged Trees
+
+
+*** Random Forests
+
+#+begin_src R
+
+fit_rf <- ranger::ranger(factor(class) ~ x + y,
+                         data = sample_mvn,
+                         probability = TRUE)
+pred_rf <- predict(fit_rf, data = density_mvn)
+density_rf <- cbind(density_mvn, "fitted" = pred_rf$predictions[, "1"] - 0.5)
+gg_plot_boundary(density_rf, sample_mvn, title = "Random Forest")
+
+
+fit_rf <- ranger::ranger(factor(class) ~ x + y,
+                         data = sample_mix,
+                         probability = TRUE)
+pred_rf <- predict(fit_rf, data = density_mix)
+density_rf <- cbind(density_mix, "fitted" = pred_rf$predictions[, "1"] - 0.5)
+gg_plot_boundary(density_rf, sample_mix, title = "Random Forest")
+
+#+end_src
+
+*** BART
+
+*** Gradient Boosting
+
+#+begin_src R
+
+fit_gbm <- gbm::gbm(class ~ x + y,
+                    data = sample_mvn,
+                    n.trees = 100,
+                    distribution = "bernoulli")
+pred_gbm <- predict(fit_gbm,
+                    n.trees = 100,
+                    newdata = density_mvn,
+                    type = "response")
+density_gbm <- cbind(density_mvn, "fitted" = pred_gbm - 0.5)
+gg_plot_boundary(density_gbm, sample_mvn, title = "Boosted Trees")
+
+
+fit_gbm <- gbm::gbm(class ~ x + y,
+                    data = sample_mix,
+                    n.trees = 500,
+                    distribution = "bernoulli")
+pred_gbm <- predict(fit_gbm,
+                    n.trees = 500,
+                    newdata = density_mix,
+                    type = "response")
+density_gbm <- cbind(density_mix, "fitted" = pred_gbm-0.5)
+gg_plot_boundary(density_gbm, sample_mix, title = "Boosted Trees")
+
+#+end_src
+
+*** xgboost
+
+#+begin_src R
+
+set.seed(31415)
+sample_xg <- xgboost::xgb.DMatrix(
+                          as.matrix(sample_mvn[, c("x", "y")]),
+                          label = as.numeric(sample_mvn$class))
+xgcv <- xgboost::xgb.cv(data = sample_xg,
+                        nrounds = 50,
+                        early_stopping_rounds = 3,
+                        nfold = 5,
+                        objective = "binary:logistic")
+fit_xg <- xgboost::xgboost(data = sample_xg,
+                           nrounds = xgcv$best_iteration,
+                           objective = "binary:logistic")
+pred_xg <- predict(fit_xg, newdata = as.matrix(density_mvn[, c("x", "y")]))
+density_xg <- cbind(density_mvn, "fitted" = pred_xg - 0.5)
+gg_plot_boundary(density_xg, sample_mvn, title = "xgboost")
+
+
+set.seed(31415)
+sample_xg <- xgboost::xgb.DMatrix(
+                          as.matrix(sample_mix[, c("x", "y")]),
+                          label = as.numeric(sample_mix$class))
+xgcv <- xgboost::xgb.cv(data = sample_xg,
+                        nrounds = 50,
+                        early_stopping_rounds = 3,
+                        nfold = 5,
+                        objective = "binary:logistic")
+fit_xg <- xgboost::xgboost(data = sample_xg,
+                           nrounds = xgcv$best_iteration,
+                           objective = "binary:logistic")
+pred_xg <- predict(fit_xg, newdata = as.matrix(density_mix[, c("x", "y")]))
+density_xg <- cbind(density_mix, "fitted" = pred_xg - 0.5)
+gg_plot_boundary(density_xg, sample_mix, title = "xgboost")
+
+#+end_src
+
+
+** Neural Networks
+
+*** Feedforward Perceptrons
+
+#+begin_src R
+
+set.seed(31415)
+fit_nn <- nnet::nnet(factor(class) ~ x + y,
+                     data = sample_mvn,
+                     size = 4,
+                     decay = 0.01,
+                     rang = 0.3,
+                     maxit = 200)
+pred_nn <- predict(fit_nn, newdata = density_mvn, type = "raw")
+density_nn <- cbind(density_mvn, "fitted" = pred_nn - 0.5)
+gg_plot_boundary(density_nn, sample_mvn, title = "Neural Network")
+
+#+end_src
+
+*** Extreme Learning Machines
+
+#+begin_src R
+set.seed(31415)
+fit_elm <- elmNNRcpp::elm_train(x = as.matrix(sample_mvn[, c("x", "y")]),
+                                y = elmNNRcpp::onehot_encode(sample_mvn[["class"]]),
+                                nhid = 10,
+                                actfun = "sig")
+pred_elm <- elmNNRcpp::elm_predict(fit_elm,
+                                   as.matrix(density_mvn[, c("x", "y")]))
+density_elm <- cbind(density_mvn, "fitted" = pred_elm[, 1] - 0.5)
+gg_plot_boundary(density_elm, sample_mvn, title = "ELM")
+
+#+end_src

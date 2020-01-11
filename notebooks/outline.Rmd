@@ -32,11 +32,12 @@ source("R/bayeserror.R")
 
 ## 2D Gaussian
 set.seed(31415)
-data_2dnormal <- as.data.frame(mlbench::mlbench.2dnormals(2000, 2))
+data_2dnormal <- as.data.frame(mlbench::mlbench.2dnormals(5000, 2))
 data_2dnormal <- data.matrix(data_2dnormal)
 data_2dnormal[, 3] <- data_2dnormal[, 3] - 1 # need 0/1 classes instead of 1/2
 x <- data_2dnormal[, 1:2]
 y <- data_2dnormal[, 3]
+
 ## We will use three classifiers
 classifiers <- c(randomForest_classify, naivebayes_classify, svm_classify)
 bayeserror(x, y, classifiers)
@@ -51,21 +52,14 @@ y <- data_sonar[, ncol(data_sonar)]
 classifiers <- c(randomForest_classify, naivebayes_classify, svm_classify)
 bayeserror(x, y, classifiers)
 
-set.seed(31415)
-data(PimaIndiansDiabetes, package = "mlbench")
-data_sonar <- data.matrix(Sonar)
-data_sonar[, ncol(Sonar)] <- data_sonar[, ncol(Sonar)] - 1 # need 0/1 classes instead of 1/2
-x <- data_sonar[, -ncol(data_sonar)]
-y <- data_sonar[, ncol(data_sonar)]
-## We will use three classifiers
-classifiers <- c(randomForest_classify, naivebayes_classify, svm_classify)
-bayeserror(x, y, classifiers)
-
 ```
 
 
+Look at the package `philentropy` for distance measures, `smartsvm` in Python.
+
 
 ``` R
+
 print_information_measures<- function(X, ave) {
     X <- infotheo::discretize(X)
     ave <- infotheo::discretize(ave)
@@ -90,6 +84,67 @@ print_information_measures<- function(X, ave) {
                   "\nSum Ent", sum_ent,
                   "\nAvg Ent", avg_ent))
 }
+
+
+```
+
+``` R
+library("zeallot")
+
+split_vec <- function(x, n) split(x, sample(x %% n) + 1)
+split_idx <- function(x, n) split_vec(seq_len(nrow(x)), n)
+
+data(titanic3, package="PASWR")
+setDT(titanic3)
+c(idx_train, idx_eval) %<-%
+    split_idx(titanic3, 2)
+c(idx_train, idx_eval) %<-%
+    split_idx(titanic3, 2)
+Xy_calibrate_train <- titanic3[idx_train]
+X_calibrate_train <- titanic3[idx_train, !"survived"]
+y_calibrate_train <- titanic3[idx_train][["survived"]]
+Xy_calibrate_eval <- titanic3[idx_eval]
+X_calibrate_eval <- titanic3[idx_eval, !"survived"]
+y_calibrate_eval <- titanic3[idx_eval][["survived"]]
+
+fit_rpart <- rpart::rpart(survived ~ sex+age+pclass+sibsp+parch, Xy_calibrate_train, method = "class")
+rpart.plot::prp(fit_rpart, faclen = 10, varlen = 15, cex = 1.2, box.col = c("red", "lightblue")[fit_rpart$frame$yval], extra = 108, type = 5)
+
+pred_rpart <- predict(fit_rpart, Xy_calibrate_eval, type = "class")
+
+MLmetrics::ConfusionMatrix(y_calibrate_eval, pred_rpart)
+MLmetrics::Accuracy(y_calibrate_eval, pred_rpart)
+MLmetrics::LogLoss(y_calibrate_eval, as.integer(pred_rpart) - 1)
+MLmetrics::AUC(y_calibrate_eval, as.integer(pred_rpart) - 1)
+
+fit_naivebayes <- naivebayes::naive_bayes(x = X_calibrate_train[, .(sex, age, pclass, sibsp, parch)],
+                                          y = factor(y_calibrate_train),
+                                          laplace = 0.5)
+
+plot(fit_naivebayes, ask = TRUE)
+
+pred_naivebayes <- predict(fit_naivebayes, newdata = X_calibrate_eval)
+MLmetrics::ConfusionMatrix(y_calibrate_eval, pred_naivebayes)
+MLmetrics::Accuracy(y_calibrate_eval, pred_naivebayes)
+MLmetrics::LogLoss(y_calibrate_eval, as.integer(pred_naivebayes) - 1)
+MLmetrics::AUC(y_calibrate_eval, as.integer(pred_naivebayes) - 1)
+
+fit_oner <- OneR::OneR(survived ~ sex+age+pclass+sibsp+parch,
+                       Xy_calibrate_train)
+
+plot(fit_oner, ask = TRUE)
+
+pred_oner <- predict(fit_oner, newdata = X_calibrate_eval)
+MLmetrics::ConfusionMatrix(y_calibrate_eval, pred_oner)
+MLmetrics::Accuracy(y_calibrate_eval, pred_oner)
+MLmetrics::LogLoss(y_calibrate_eval, as.integer(pred_oner) - 1)
+MLmetrics::AUC(y_calibrate_eval, as.integer(pred_oner) - 1)
+
+
+as.data.frame(list(rpart = as.integer(pred_rpart),
+                   nb = as.integer(pred_naivebayes),
+                   oner = as.integer(pred_oner))) %>%
+  cor
 
 
 ```
